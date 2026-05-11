@@ -1,14 +1,31 @@
 <!-- newtypesdk_android/app/src/main/res/layout/activity_main.xml -->
+<!-- ============================================================================
+     MainActivity 布局文件
+     ============================================================================
+     此文件定义应用主界面的 UI 布局，包含：
+     1. 配置输入区域（API 地址、LiveKit URL、房间信息等）
+     2. 操作按钮区域（Join、Leave、PTT 按钮）
+     3. VAD 设置区域（模式选择和预设选择）
+     4. 状态显示区域（连接状态、转录文本、会话总结）
+     ============================================================================ -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    <!-- 布局宽度：填充父容器 -->
     android:layout_width="match_parent"
+    <!-- 布局高度：填充父容器 -->
     android:layout_height="match_parent"
+    <!-- 内边距：四周 16dp，确保内容不贴边 -->
     android:padding="16dp">
 
+    <!-- 线性布局：垂直排列所有子控件 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
+        <!-- ====================================================================
+             标题区域
+             ==================================================================== -->
+        <!-- 应用标题文本 -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -16,6 +33,10 @@
             android:textSize="18sp"
             android:textStyle="bold" />
 
+        <!-- ====================================================================
+             配置输入区域
+             ==================================================================== -->
+        <!-- API 基础地址输入框：NewType 后端服务的 URL -->
         <EditText
             android:id="@+id/apiBaseUrlInput"
             android:layout_width="match_parent"
@@ -24,6 +45,7 @@
             android:hint="API Base URL"
             android:text="https://newtype.squady.app:11000" />
 
+        <!-- LiveKit URL 输入框：WebRTC 信令服务器地址 -->
         <EditText
             android:id="@+id/liveKitUrlInput"
             android:layout_width="match_parent"
@@ -32,6 +54,7 @@
             android:hint="LiveKit URL"
             android:text="wss://livekit.squady.app:11000" />
 
+        <!-- Token 端点路径输入框：获取访问令牌的 API 路径 -->
         <EditText
             android:id="@+id/tokenEndpointInput"
             android:layout_width="match_parent"
@@ -40,6 +63,7 @@
             android:hint="Token Path"
             android:text="/api/livekit/token" />
 
+        <!-- 房间名称输入框：要加入的会话房间名 -->
         <EditText
             android:id="@+id/roomNameInput"
             android:layout_width="match_parent"
@@ -48,6 +72,7 @@
             android:hint="Room Name"
             android:text="speaking-demo" />
 
+        <!-- 儿童姓名输入框：用户身份标识 -->
         <EditText
             android:id="@+id/childNameInput"
             android:layout_width="match_parent"
@@ -56,6 +81,7 @@
             android:hint="Child Name"
             android:text="Leo" />
 
+        <!-- 年龄输入框：用户年龄信息 -->
         <EditText
             android:id="@+id/ageInput"
             android:layout_width="match_parent"
@@ -64,6 +90,7 @@
             android:hint="Age"
             android:text="9" />
 
+        <!-- 年级输入框：用户年级信息 -->
         <EditText
             android:id="@+id/gradeInput"
             android:layout_width="match_parent"
@@ -72,12 +99,17 @@
             android:hint="Grade"
             android:text="Grade 3" />
 
+        <!-- ====================================================================
+             操作按钮区域
+             ==================================================================== -->
+        <!-- 水平线性布局：并排显示 Join 和 Leave 按钮 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
             android:orientation="horizontal">
 
+            <!-- Join 按钮：发起加入会话请求 -->
             <Button
                 android:id="@+id/joinButton"
                 android:layout_width="0dp"
@@ -85,6 +117,8 @@
                 android:layout_weight="1"
                 android:text="Join" />
 
+            <!-- Leave 按钮：离开当前会话
+                 默认禁用（enabled="false"），仅在连接成功后启用 -->
             <Button
                 android:id="@+id/leaveButton"
                 android:layout_width="0dp"
@@ -95,6 +129,10 @@
                 android:text="Leave" />
         </LinearLayout>
 
+        <!-- ====================================================================
+             VAD 模式设置区域
+             ==================================================================== -->
+        <!-- VAD 模式标题 -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -102,12 +140,14 @@
             android:text="VAD Mode"
             android:textStyle="bold" />
 
+        <!-- VAD 模式单选组：水平排列三个选项 -->
         <RadioGroup
             android:id="@+id/vadModeGroup"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal">
 
+            <!-- PTT 模式（VAD 关闭）：按下说话，松开停止 -->
             <RadioButton
                 android:id="@+id/vadModeOff"
                 android:layout_width="0dp"
@@ -115,6 +155,7 @@
                 android:layout_weight="1"
                 android:text="PTT" />
 
+            <!-- 半自动模式：VAD 自动检测开始说话，手动结束 -->
             <RadioButton
                 android:id="@+id/vadModeSemiAuto"
                 android:layout_width="0dp"
@@ -122,6 +163,7 @@
                 android:layout_weight="1"
                 android:text="半自动" />
 
+            <!-- 全自动模式：VAD 自动检测和结束说话（默认选中） -->
             <RadioButton
                 android:id="@+id/vadModeFullAuto"
                 android:layout_width="0dp"
@@ -131,6 +173,10 @@
                 android:text="全自动" />
         </RadioGroup>
 
+        <!-- ====================================================================
+             VAD 预设设置区域
+             ==================================================================== -->
+        <!-- VAD 预设标题 -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -138,12 +184,14 @@
             android:text="VAD Preset"
             android:textStyle="bold" />
 
+        <!-- VAD 预设单选组：水平排列三个灵敏度选项 -->
         <RadioGroup
             android:id="@+id/vadPresetGroup"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal">
 
+            <!-- 灵敏预设：更容易触发语音检测，适合安静环境 -->
             <RadioButton
                 android:id="@+id/vadPresetSensitive"
                 android:layout_width="0dp"
@@ -151,6 +199,7 @@
                 android:layout_weight="1"
                 android:text="灵敏" />
 
+            <!-- 自然预设：平衡的检测灵敏度（默认选中） -->
             <RadioButton
                 android:id="@+id/vadPresetNatural"
                 android:layout_width="0dp"
@@ -159,6 +208,7 @@
                 android:checked="true"
                 android:text="自然" />
 
+            <!-- 儿童预设：针对儿童语音特点优化的检测参数 -->
             <RadioButton
                 android:id="@+id/vadPresetChild"
                 android:layout_width="0dp"
@@ -167,6 +217,8 @@
                 android:text="儿童" />
         </RadioGroup>
 
+        <!-- PTT 按钮：按下说话（Push-to-Talk）
+             仅在 VAD 模式为 OFF 或半自动时可用，全自动模式下禁用 -->
         <Button
             android:id="@+id/pttButton"
             android:layout_width="match_parent"
@@ -175,6 +227,11 @@
             android:enabled="false"
             android:text="Hold to Talk" />
 
+        <!-- ====================================================================
+             状态显示区域
+             ==================================================================== -->
+        <!-- 状态文本：显示详细的连接状态信息
+             包括：会话阶段、Agent 状态、参与者数量、VAD 模式/预设等 -->
         <TextView
             android:id="@+id/statusText"
             android:layout_width="match_parent"
@@ -183,6 +240,7 @@
             android:text="phase=IDLE"
             android:textSize="14sp" />
 
+        <!-- 转录区域标题 -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -190,6 +248,8 @@
             android:text="Transcript"
             android:textStyle="bold" />
 
+        <!-- 转语文本：显示 AI 和儿童的对话内容
+             最小高度 120dp，确保有足够空间显示多轮对话 -->
         <TextView
             android:id="@+id/transcriptText"
             android:layout_width="match_parent"
@@ -197,6 +257,7 @@
             android:minHeight="120dp"
             android:text="暂无消息" />
 
+        <!-- 总结区域标题 -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -204,6 +265,9 @@
             android:text="Summary"
             android:textStyle="bold" />
 
+        <!-- 总结文本：显示会话总结和反馈
+             包括：总结内容、做得好的地方、改进建议、下一个话题、发音重点
+             最小高度 80dp -->
         <TextView
             android:id="@+id/summaryText"
             android:layout_width="match_parent"
