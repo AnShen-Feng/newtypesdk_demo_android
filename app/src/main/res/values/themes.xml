@@ -1,0 +1,4 @@
+<!-- newtypesdk_android/app/src/main/res/values/themes.xml -->
+<resources>
+    <style name="Theme.NewTypeSdkDemo" parent="Theme.MaterialComponents.DayNight.NoActionBar" />
+</resources>
