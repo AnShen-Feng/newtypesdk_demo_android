@@ -16,4 +16,8 @@ plugins {
     // 声明 Kotlin Android 插件（应用于 app 模块）
     // 该插件启用 Kotlin 语言支持，使项目能够编译 Kotlin 代码
     alias(libs.plugins.kotlin.android) apply false
+
+    // 声明 Kotlin Serialization 插件（应用于 app 模块）
+    // Demo 使用类型安全的 @Serializable 数据类请求客户后端
+    alias(libs.plugins.kotlin.serialization) apply false
 }

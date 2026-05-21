@@ -16,6 +16,8 @@ plugins {
     alias(libs.plugins.android.application)
     // 应用 Kotlin Android 插件 - 启用 Kotlin 语言编译支持
     alias(libs.plugins.kotlin.android)
+    // 应用 Kotlin Serialization 插件 - Demo 使用类型安全 JSON 模型请求客户后端
+    alias(libs.plugins.kotlin.serialization)
 }
 
 // ----------------------------------------------------------------------------

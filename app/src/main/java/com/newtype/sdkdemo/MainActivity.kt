@@ -15,18 +15,25 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import com.newtype.sdkcore.CustomerLoginResponse
-import com.newtype.sdkcore.NewTypeConfig
+import com.newtype.sdkcore.NewTypeConnectionCredential
 import com.newtype.sdkcore.NewTypeSessionClient
 import com.newtype.sdkcore.SessionConnectionState
 import com.newtype.sdkcore.SessionEvent
-import com.newtype.sdkcore.SessionJoinRequest
 import com.newtype.sdkcore.SessionPhase
 import com.newtype.sdkcore.VadMode
 import com.newtype.sdkcore.vad.VADPreset
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 class MainActivity : AppCompatActivity() {
     private var client: NewTypeSessionClient? = null
@@ -59,6 +66,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var ageInput: EditText
     private lateinit var gradeInput: EditText
     private var customerAuth: CustomerAuthState? = null
+    private var activeSessionId: String? = null
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -104,7 +112,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun bindActions() {
         loginButton.setOnClickListener { loginCustomer() }
-        joinButton.setOnClickListener { joinSession() }
+        joinButton.setOnClickListener { connectSession() }
         leaveButton.setOnClickListener { leaveSession() }
         vadModeGroup.setOnCheckedChangeListener { _, checkedId ->
             val mode = when (checkedId) {
@@ -137,7 +145,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loginCustomer() {
-        val config = buildConfig()
+        val backend = buildCustomerBackendApi()
         val email = loginEmailInput.text.toString().trim()
         val password = loginPasswordInput.text.toString()
         if (email.isBlank() || password.isBlank()) {
@@ -148,10 +156,7 @@ class MainActivity : AppCompatActivity() {
         loginButton.text = "登录中..."
         lifecycleScope.launch {
             runCatching {
-                val loginClient = NewTypeSessionClient.create(this@MainActivity, config)
-                loginClient.login(email, password).also {
-                    loginClient.close()
-                }
+                backend.login(email, password)
             }.onSuccess { response ->
                 customerAuth = response.toAuthState()
                 if (!response.user.displayName.isNullOrBlank()) {
@@ -169,39 +174,43 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun joinSession() {
+    private fun connectSession() {
         val auth = customerAuth
         if (auth == null) {
             toast("请先登录客户后端")
             return
         }
-        val config = buildConfig()
         client?.close()
-        client = NewTypeSessionClient.create(this, config)
+        client = NewTypeSessionClient.create(this)
         val activeClient = client ?: return
         activeClient.setVadPreset(getCurrentVadPreset())
         activeClient.setVadMode(getCurrentVadMode())
         observeClient(activeClient)
-        val request = SessionJoinRequest(
-            customerToken = auth.token,
+
+        val backend = buildCustomerBackendApi()
+        val request = StartRealtimeSessionRequest(
             appUserId = auth.user.appUserId,
-            childName = childNameInput.text.toString().trim(),
-            age = ageInput.text.toString().trim(),
-            grade = gradeInput.text.toString().trim(),
+            externalSessionId = null,
+            childName = childNameInput.text.toString().trim().ifBlank { null },
+            age = ageInput.text.toString().trim().ifBlank { null },
+            grade = gradeInput.text.toString().trim().ifBlank { null },
             topic = topicInput.text.toString().trim().ifBlank { "Open conversation" },
+            interests = emptyList(),
             identity = childNameInput.text.toString().trim().ifBlank { "android-child" },
         )
         lifecycleScope.launch {
             runCatching {
-                client?.join(request)
+                val credential = backend.startRealtimeSession(auth.token, request)
+                activeSessionId = credential.sessionId
+                activeClient.connect(credential.toSdkCredential())
             }.onFailure {
-                toast("加入失败：${it.message.orEmpty()}")
+                toast("连接失败：${it.message.orEmpty()}")
             }
         }
     }
 
-    private fun buildConfig(): NewTypeConfig {
-        return NewTypeConfig(apiBaseUrl = apiBaseUrlInput.text.toString().trim())
+    private fun buildCustomerBackendApi(): CustomerBackendApi {
+        return CustomerBackendApi(apiBaseUrl = apiBaseUrlInput.text.toString().trim())
     }
 
     private fun getCurrentVadMode(): VadMode {
@@ -223,8 +232,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun leaveSession() {
+        val sessionId = activeSessionId
+        val auth = customerAuth
+        val backend = buildCustomerBackendApi()
         lifecycleScope.launch {
-            client?.leave("user-leave")
+            runCatching { client?.disconnect("user-leave") }
+            if (!sessionId.isNullOrBlank() && auth != null) {
+                runCatching { backend.endRealtimeSession(auth.token, sessionId) }
+            }
+            activeSessionId = null
         }
     }
 
@@ -256,7 +272,7 @@ class MainActivity : AppCompatActivity() {
             append("\nparticipants=")
             append(state.participantCount)
             append(" ")
-            append(if (state.participantCount > 1) "(Agent 已入房 ✅)" else "(等待 Agent 入房...)")
+            append(if (state.participantCount > 1) "(Agent 已入房)" else "(等待 Agent 入房...)")
             append("\nsession=")
             append(state.sessionId ?: "-")
             append("\nmode=")
@@ -275,11 +291,11 @@ class MainActivity : AppCompatActivity() {
             )
             append("\n\n=== 连接状态 ===")
             append("\n主题：${topicInput.text}")
-            append("\nAPI: ${apiBaseUrlInput.text}")
+            append("\n客户后端：${apiBaseUrlInput.text}")
             append("\n用户：")
             append(customerAuth?.user?.displayLabel() ?: "未登录")
-            append("\n麦克风：${if (state.micReady) "就绪 ✅" else "未就绪"}")
-            append("\n录音：${if (state.recording) "进行中 🎤" else "待机"}")
+            append("\n麦克风：${if (state.micReady) "就绪" else "未就绪"}")
+            append("\n录音：${if (state.recording) "进行中" else "待机"}")
         }
 
         transcriptText.text = state.transcript.joinToString("\n\n") { entry ->
@@ -318,9 +334,9 @@ class MainActivity : AppCompatActivity() {
         val connected = safeState.phase == SessionPhase.CONNECTED
         val currentMode = getCurrentVadMode()
         val loggedIn = customerAuth != null
-        loginButton.isEnabled = !connected && safeState.phase != SessionPhase.REQUESTING_TOKEN && safeState.phase != SessionPhase.CONNECTING
+        loginButton.isEnabled = !connected && safeState.phase != SessionPhase.CONNECTING
         leaveButton.isEnabled = connected
-        joinButton.isEnabled = loggedIn && safeState.phase != SessionPhase.REQUESTING_TOKEN && safeState.phase != SessionPhase.CONNECTING && !connected
+        joinButton.isEnabled = loggedIn && safeState.phase != SessionPhase.CONNECTING && !connected
         pttButton.isEnabled = connected && !safeState.turnBusy && currentMode != VadMode.FULL_AUTO
         vadModeGroup.isEnabled = true
     }
@@ -355,6 +371,191 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
+private class CustomerBackendApi(
+    private val apiBaseUrl: String,
+    private val httpClient: OkHttpClient = OkHttpClient(),
+) {
+    private val json = Json {
+        ignoreUnknownKeys = true
+        explicitNulls = false
+    }
+
+    suspend fun login(email: String, password: String): CustomerLoginResponse {
+        val request = CustomerLoginRequest(email = email.trim(), password = password)
+        val response = execute(
+            Request.Builder()
+                .url(buildUrl("/auth/login"))
+                .post(json.encodeToString(CustomerLoginRequest.serializer(), request).toJsonBody())
+                .header("Accept", "application/json")
+                .build(),
+        )
+        return json.decodeFromString(CustomerLoginResponse.serializer(), response)
+    }
+
+    suspend fun startRealtimeSession(
+        customerToken: String,
+        request: StartRealtimeSessionRequest,
+    ): RealtimeConnectionCredentialResponse {
+        val sessionResponse = execute(
+            authorizedBuilder("/app/sessions", customerToken)
+                .post(json.encodeToString(StartRealtimeSessionRequest.serializer(), request).toJsonBody())
+                .build(),
+        )
+        val session = json.decodeFromString(StartRealtimeSessionResponse.serializer(), sessionResponse)
+        val credential = session.realtime ?: session.livekit ?: requestRealtimeCredential(
+            customerToken = customerToken,
+            sessionId = session.session.sessionId,
+            userToken = session.userToken?.token ?: throw IllegalStateException("customer backend response missing userToken"),
+        )
+        return RealtimeConnectionCredentialResponse(
+            sessionId = session.session.sessionId,
+            roomName = credential.roomName.ifBlank { session.session.roomName },
+            connectionUrl = credential.url,
+            connectionToken = credential.token,
+            identity = credential.identity,
+            expiresIn = credential.expiresIn,
+        )
+    }
+
+    private suspend fun requestRealtimeCredential(
+        customerToken: String,
+        sessionId: String,
+        userToken: String,
+    ): CustomerRealtimeCredentialResponse {
+        val credentialResponse = execute(
+            authorizedBuilder("/app/sessions/${sessionId.urlEncode()}/livekit-token", customerToken)
+                .post(json.encodeToString(ConnectionCredentialRequest.serializer(), ConnectionCredentialRequest(userToken = userToken)).toJsonBody())
+                .build(),
+        )
+        return json.decodeFromString(CustomerRealtimeCredentialResponse.serializer(), credentialResponse)
+    }
+
+    suspend fun endRealtimeSession(customerToken: String, sessionId: String) {
+        execute(
+            authorizedBuilder("/app/sessions/${sessionId.urlEncode()}/end", customerToken)
+                .post("{}".toJsonBody())
+                .build(),
+        )
+    }
+
+    private fun authorizedBuilder(path: String, bearerToken: String): Request.Builder {
+        return Request.Builder()
+            .url(buildUrl(path))
+            .header("Authorization", "Bearer $bearerToken")
+            .header("Accept", "application/json")
+    }
+
+    private suspend fun execute(request: Request): String {
+        return suspendCancellableCoroutine { continuation ->
+            val call = httpClient.newCall(request)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : okhttp3.Callback {
+                override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                    if (!continuation.isCancelled) {
+                        continuation.resumeWith(Result.failure(e))
+                    }
+                }
+
+                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                    response.use { res ->
+                        val body = res.body?.string().orEmpty()
+                        if (!res.isSuccessful) {
+                            continuation.resumeWith(Result.failure(IllegalStateException("HTTP ${res.code}: $body")))
+                            return
+                        }
+                        continuation.resumeWith(Result.success(body))
+                    }
+                }
+            })
+        }
+    }
+
+    private fun buildUrl(path: String): String {
+        val normalizedBase = apiBaseUrl.trim().trimEnd('/')
+        val normalizedPath = path.trim().let { if (it.startsWith("/")) it else "/$it" }
+        return "$normalizedBase$normalizedPath"
+    }
+}
+
+@Serializable
+private data class CustomerLoginRequest(
+    val email: String,
+    val password: String,
+)
+
+@Serializable
+private data class CustomerLoginResponse(
+    val token: String,
+    val tokenType: String,
+    val expiresIn: Long,
+    val user: CustomerLoginUser,
+)
+
+@Serializable
+private data class CustomerLoginUser(
+    val appUserId: String,
+    val email: String,
+    val displayName: String? = null,
+    val created: Boolean = false,
+)
+
+@Serializable
+private data class StartRealtimeSessionRequest(
+    val appUserId: String,
+    val externalSessionId: String? = null,
+    val childName: String? = null,
+    val age: String? = null,
+    val grade: String? = null,
+    val topic: String,
+    val interests: List<String> = emptyList(),
+    val identity: String,
+)
+
+@Serializable
+private data class StartRealtimeSessionResponse(
+    val session: CustomerSessionRecord,
+    val userToken: CustomerUserToken? = null,
+    val livekit: CustomerRealtimeCredentialResponse? = null,
+    val realtime: CustomerRealtimeCredentialResponse? = null,
+)
+
+@Serializable
+private data class CustomerSessionRecord(
+    val sessionId: String,
+    val roomName: String,
+)
+
+@Serializable
+private data class CustomerUserToken(
+    val token: String,
+    val tokenType: String,
+    val expiresIn: Long,
+)
+
+@Serializable
+private data class ConnectionCredentialRequest(
+    val userToken: String,
+)
+
+@Serializable
+private data class RealtimeConnectionCredentialResponse(
+    val sessionId: String = "",
+    val roomName: String = "",
+    val connectionUrl: String,
+    val connectionToken: String,
+    val identity: String,
+    val expiresIn: Long? = null,
+)
+
+@Serializable
+private data class CustomerRealtimeCredentialResponse(
+    val token: String,
+    val url: String,
+    val identity: String,
+    val roomName: String,
+    val expiresIn: Long? = null,
+)
+
 private data class CustomerAuthState(
     val token: String,
     val expiresIn: Long,
@@ -379,6 +580,17 @@ private fun CustomerLoginResponse.toAuthState(): CustomerAuthState {
     )
 }
 
+private fun RealtimeConnectionCredentialResponse.toSdkCredential(): NewTypeConnectionCredential {
+    return NewTypeConnectionCredential(
+        sessionId = sessionId,
+        roomName = roomName,
+        connectionUrl = connectionUrl,
+        connectionToken = connectionToken,
+        identity = identity,
+        expiresIn = expiresIn,
+    )
+}
+
 private fun CustomerAuthUser.displayLabel(): String {
     return displayName?.takeIf { it.isNotBlank() } ?: email
 }
@@ -388,3 +600,7 @@ private fun CustomerAuthState.tokenPreview(): String {
     val tail = token.takeLast(6)
     return if (token.length <= 18) token else "$head...$tail"
 }
+
+private fun String.toJsonBody() = toRequestBody("application/json".toMediaType())
+
+private fun String.urlEncode(): String = URLEncoder.encode(this, StandardCharsets.UTF_8.name())
