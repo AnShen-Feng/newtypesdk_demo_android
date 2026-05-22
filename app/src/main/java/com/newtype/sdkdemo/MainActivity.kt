@@ -4,6 +4,7 @@ package com.newtype.sdkdemo
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import android.view.MotionEvent
 import android.widget.Button
 import android.widget.EditText
@@ -78,6 +79,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Log.i(TAG, "[NT-DEMO][LIFECYCLE] onCreate")
         setContentView(R.layout.activity_main)
         bindViews()
         bindActions()
@@ -85,6 +87,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun bindViews() {
+        Log.d(TAG, "[NT-DEMO][UI] bindViews")
         statusText = findViewById(R.id.statusText)
         transcriptText = findViewById(R.id.transcriptText)
         summaryText = findViewById(R.id.summaryText)
@@ -111,6 +114,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun bindActions() {
+        Log.d(TAG, "[NT-DEMO][UI] bindActions")
         loginButton.setOnClickListener { loginCustomer() }
         joinButton.setOnClickListener { connectSession() }
         leaveButton.setOnClickListener { leaveSession() }
@@ -121,21 +125,26 @@ class MainActivity : AppCompatActivity() {
                 R.id.vadModeFullAuto -> VadMode.FULL_AUTO
                 else -> VadMode.FULL_AUTO
             }
+            Log.i(TAG, "[NT-DEMO][VAD] mode selected=$mode")
             client?.setVadMode(mode)
             renderState(latestState)
         }
         vadPresetGroup.setOnCheckedChangeListener { _, _ ->
-            client?.setVadPreset(getCurrentVadPreset())
+            val preset = getCurrentVadPreset()
+            Log.i(TAG, "[NT-DEMO][VAD] preset selected=$preset")
+            client?.setVadPreset(preset)
             renderState(latestState)
         }
         pttButton.setOnTouchListener { _, event ->
             val activeClient = client ?: return@setOnTouchListener false
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    Log.i(TAG, "[NT-DEMO][PTT] ACTION_DOWN startSpeaking")
                     lifecycleScope.launch { activeClient.startSpeaking() }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    Log.i(TAG, "[NT-DEMO][PTT] ACTION_UP/CANCEL stopSpeaking action=${event.actionMasked}")
                     lifecycleScope.launch { activeClient.stopSpeaking() }
                     true
                 }
@@ -149,15 +158,18 @@ class MainActivity : AppCompatActivity() {
         val email = loginEmailInput.text.toString().trim()
         val password = loginPasswordInput.text.toString()
         if (email.isBlank() || password.isBlank()) {
+            Log.w(TAG, "[NT-DEMO][AUTH] login blocked: email/password blank")
             toast("请输入登录邮箱和密码")
             return
         }
+        Log.i(TAG, "[NT-DEMO][AUTH] login start baseUrl=${apiBaseUrlInput.text.toString().trim()} email=$email")
         loginButton.isEnabled = false
         loginButton.text = "登录中..."
         lifecycleScope.launch {
             runCatching {
                 backend.login(email, password)
             }.onSuccess { response ->
+                Log.i(TAG, "[NT-DEMO][AUTH] login success userId=${response.user.appUserId} email=${response.user.email} token=${response.token.maskSecret()} expiresIn=${response.expiresIn}")
                 customerAuth = response.toAuthState()
                 if (!response.user.displayName.isNullOrBlank()) {
                     childNameInput.setText(response.user.displayName)
@@ -166,6 +178,7 @@ class MainActivity : AppCompatActivity() {
                 updateActionButtons(latestState)
                 toast("登录成功")
             }.onFailure {
+                Log.e(TAG, "[NT-DEMO][AUTH] login failed message=${it.message}", it)
                 customerAuth = null
                 renderCustomerAuth()
                 updateActionButtons(latestState)
@@ -177,10 +190,14 @@ class MainActivity : AppCompatActivity() {
     private fun connectSession() {
         val auth = customerAuth
         if (auth == null) {
+            Log.w(TAG, "[NT-DEMO][CONNECT] blocked: customerAuth=null")
             toast("请先登录客户后端")
             return
         }
+        Log.i(TAG, "[NT-DEMO][CONNECT] start userId=${auth.user.appUserId} baseUrl=${apiBaseUrlInput.text.toString().trim()} mode=${getCurrentVadMode()} preset=${getCurrentVadPreset()}")
+        Log.d(TAG, "[NT-DEMO][CONNECT] closing previous SDK client if present hasClient=${client != null}")
         client?.close()
+        Log.d(TAG, "[NT-DEMO][CONNECT] creating SDK client")
         client = NewTypeSessionClient.create(this)
         val activeClient = client ?: return
         activeClient.setVadPreset(getCurrentVadPreset())
@@ -198,18 +215,24 @@ class MainActivity : AppCompatActivity() {
             interests = emptyList(),
             identity = childNameInput.text.toString().trim().ifBlank { "android-child" },
         )
+        Log.i(TAG, "[NT-DEMO][BACKEND] start session request appUserId=${request.appUserId} topic=${request.topic} childName=${request.childName} identity=${request.identity}")
         lifecycleScope.launch {
             runCatching {
                 val credential = backend.startRealtimeSession(auth.token, request)
+                Log.i(TAG, "[NT-DEMO][BACKEND] credential received ${credential.safeSummary()}")
                 activeSessionId = credential.sessionId
+                Log.i(TAG, "[NT-DEMO][CONNECT] calling SDK connect sessionId=${credential.sessionId}")
                 activeClient.connect(credential.toSdkCredential())
+                Log.i(TAG, "[NT-DEMO][CONNECT] SDK connect call completed sessionId=${credential.sessionId}")
             }.onFailure {
+                Log.e(TAG, "[NT-DEMO][CONNECT] failed message=${it.message}", it)
                 toast("连接失败：${it.message.orEmpty()}")
             }
         }
     }
 
     private fun buildCustomerBackendApi(): CustomerBackendApi {
+        Log.d(TAG, "[NT-DEMO][BACKEND] build api baseUrl=${apiBaseUrlInput.text.toString().trim()}")
         return CustomerBackendApi(apiBaseUrl = apiBaseUrlInput.text.toString().trim())
     }
 
@@ -235,26 +258,38 @@ class MainActivity : AppCompatActivity() {
         val sessionId = activeSessionId
         val auth = customerAuth
         val backend = buildCustomerBackendApi()
+        Log.i(TAG, "[NT-DEMO][LEAVE] requested sessionId=$sessionId hasAuth=${auth != null}")
         lifecycleScope.launch {
             runCatching { client?.disconnect("user-leave") }
+                .onSuccess { Log.i(TAG, "[NT-DEMO][LEAVE] SDK disconnect completed") }
+                .onFailure { Log.e(TAG, "[NT-DEMO][LEAVE] SDK disconnect failed message=${it.message}", it) }
             if (!sessionId.isNullOrBlank() && auth != null) {
                 runCatching { backend.endRealtimeSession(auth.token, sessionId) }
+                    .onSuccess { Log.i(TAG, "[NT-DEMO][BACKEND] end session success sessionId=$sessionId") }
+                    .onFailure { Log.e(TAG, "[NT-DEMO][BACKEND] end session failed sessionId=$sessionId message=${it.message}", it) }
             }
             activeSessionId = null
         }
     }
 
     private fun observeClient(activeClient: NewTypeSessionClient) {
+        Log.i(TAG, "[NT-DEMO][OBSERVE] attach SDK state/events collectors")
         stateJob?.cancel()
         eventJob?.cancel()
         stateJob = lifecycleScope.launch {
-            activeClient.state.collectLatest { renderState(it) }
+            activeClient.state.collectLatest {
+                Log.i(TAG, "[NT-DEMO][STATE] phase=${it.phase} sessionId=${it.sessionId} participants=${it.participantCount} micReady=${it.micReady} recording=${it.recording} turnBusy=${it.turnBusy} agent=${it.agentStatus.phase} message=${it.agentStatus.message}")
+                renderState(it)
+            }
         }
         eventJob = lifecycleScope.launch {
             activeClient.events.collectLatest { event ->
                 when (event) {
-                    is SessionEvent.Error -> toast(event.message)
-                    is SessionEvent.Info -> Unit
+                    is SessionEvent.Error -> {
+                        Log.e(TAG, "[NT-DEMO][EVENT] error message=${event.message}")
+                        toast(event.message)
+                    }
+                    is SessionEvent.Info -> Log.i(TAG, "[NT-DEMO][EVENT] info message=${event.message}")
                 }
             }
         }
@@ -320,12 +355,15 @@ class MainActivity : AppCompatActivity() {
 
         updateActionButtons(state)
 
-        android.util.Log.d("MainActivity", "Room state: phase=${state.phase.name}, participants=${state.participantCount}, agent=${state.agentStatus.phase.name}")
+        Log.d(TAG, "[NT-DEMO][RENDER] phase=${state.phase.name}, participants=${state.participantCount}, agent=${state.agentStatus.phase.name}, transcript=${state.transcript.size}, hasSummary=${state.summary != null}")
     }
 
     private fun ensureMicPermission() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            Log.i(TAG, "[NT-DEMO][PERMISSION] requesting RECORD_AUDIO")
             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+            Log.i(TAG, "[NT-DEMO][PERMISSION] RECORD_AUDIO already granted")
         }
     }
 
@@ -363,11 +401,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        Log.i(TAG, "[NT-DEMO][LIFECYCLE] onDestroy sessionId=$activeSessionId")
         stateJob?.cancel()
         eventJob?.cancel()
         client?.close()
         client = null
         super.onDestroy()
+    }
+
+    companion object {
+        private const val TAG = "NewTypeDemo"
     }
 }
 
@@ -382,6 +425,7 @@ private class CustomerBackendApi(
 
     suspend fun login(email: String, password: String): CustomerLoginResponse {
         val request = CustomerLoginRequest(email = email.trim(), password = password)
+        Log.i(TAG, "[NT-DEMO][HTTP] POST /auth/login email=${request.email}")
         val response = execute(
             Request.Builder()
                 .url(buildUrl("/auth/login"))
@@ -389,6 +433,7 @@ private class CustomerBackendApi(
                 .header("Accept", "application/json")
                 .build(),
         )
+        Log.d(TAG, "[NT-DEMO][HTTP] /auth/login responseBytes=${response.length}")
         return json.decodeFromString(CustomerLoginResponse.serializer(), response)
     }
 
@@ -396,12 +441,15 @@ private class CustomerBackendApi(
         customerToken: String,
         request: StartRealtimeSessionRequest,
     ): RealtimeConnectionCredentialResponse {
+        Log.i(TAG, "[NT-DEMO][HTTP] POST /app/sessions appUserId=${request.appUserId} topic=${request.topic} token=${customerToken.maskSecret()}")
         val sessionResponse = execute(
             authorizedBuilder("/app/sessions", customerToken)
                 .post(json.encodeToString(StartRealtimeSessionRequest.serializer(), request).toJsonBody())
                 .build(),
         )
+        Log.d(TAG, "[NT-DEMO][HTTP] /app/sessions responseBytes=${sessionResponse.length}")
         val session = json.decodeFromString(StartRealtimeSessionResponse.serializer(), sessionResponse)
+        Log.i(TAG, "[NT-DEMO][HTTP] session created sessionId=${session.session.sessionId} roomName=${session.session.roomName} hasRealtime=${session.realtime != null} hasLivekit=${session.livekit != null} hasUserToken=${session.userToken != null}")
         val credential = session.realtime ?: session.livekit ?: requestRealtimeCredential(
             customerToken = customerToken,
             sessionId = session.session.sessionId,
@@ -422,15 +470,18 @@ private class CustomerBackendApi(
         sessionId: String,
         userToken: String,
     ): CustomerRealtimeCredentialResponse {
+        Log.i(TAG, "[NT-DEMO][HTTP] POST /app/sessions/{sessionId}/livekit-token sessionId=$sessionId userToken=${userToken.maskSecret()}")
         val credentialResponse = execute(
             authorizedBuilder("/app/sessions/${sessionId.urlEncode()}/livekit-token", customerToken)
                 .post(json.encodeToString(ConnectionCredentialRequest.serializer(), ConnectionCredentialRequest(userToken = userToken)).toJsonBody())
                 .build(),
         )
+        Log.d(TAG, "[NT-DEMO][HTTP] livekit-token responseBytes=${credentialResponse.length}")
         return json.decodeFromString(CustomerRealtimeCredentialResponse.serializer(), credentialResponse)
     }
 
     suspend fun endRealtimeSession(customerToken: String, sessionId: String) {
+        Log.i(TAG, "[NT-DEMO][HTTP] POST /app/sessions/{sessionId}/end sessionId=$sessionId token=${customerToken.maskSecret()}")
         execute(
             authorizedBuilder("/app/sessions/${sessionId.urlEncode()}/end", customerToken)
                 .post("{}".toJsonBody())
@@ -447,10 +498,12 @@ private class CustomerBackendApi(
 
     private suspend fun execute(request: Request): String {
         return suspendCancellableCoroutine { continuation ->
+            Log.i(TAG, "[NT-DEMO][HTTP] request ${request.method} ${request.url}")
             val call = httpClient.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : okhttp3.Callback {
                 override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                    Log.e(TAG, "[NT-DEMO][HTTP] failure ${request.method} ${request.url} message=${e.message}", e)
                     if (!continuation.isCancelled) {
                         continuation.resumeWith(Result.failure(e))
                     }
@@ -459,6 +512,7 @@ private class CustomerBackendApi(
                 override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
                     response.use { res ->
                         val body = res.body?.string().orEmpty()
+                        Log.i(TAG, "[NT-DEMO][HTTP] response ${request.method} ${request.url} code=${res.code} success=${res.isSuccessful} bytes=${body.length}")
                         if (!res.isSuccessful) {
                             continuation.resumeWith(Result.failure(IllegalStateException("HTTP ${res.code}: $body")))
                             return
@@ -474,6 +528,10 @@ private class CustomerBackendApi(
         val normalizedBase = apiBaseUrl.trim().trimEnd('/')
         val normalizedPath = path.trim().let { if (it.startsWith("/")) it else "/$it" }
         return "$normalizedBase$normalizedPath"
+    }
+
+    companion object {
+        private const val TAG = "NewTypeDemo"
     }
 }
 
@@ -599,6 +657,15 @@ private fun CustomerAuthState.tokenPreview(): String {
     val head = token.take(8)
     val tail = token.takeLast(6)
     return if (token.length <= 18) token else "$head...$tail"
+}
+
+private fun RealtimeConnectionCredentialResponse.safeSummary(): String {
+    return "sessionId=$sessionId roomName=$roomName url=$connectionUrl identity=$identity token=${connectionToken.maskSecret()} expiresIn=$expiresIn"
+}
+
+private fun String.maskSecret(): String {
+    if (isBlank()) return "<blank>"
+    return if (length <= 16) "<len=$length>" else "${take(8)}...${takeLast(6)}(len=$length)"
 }
 
 private fun String.toJsonBody() = toRequestBody("application/json".toMediaType())
