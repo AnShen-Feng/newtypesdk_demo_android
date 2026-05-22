@@ -60,3 +60,6 @@ rootProject.name = "newtypesdk_demo_android"
 // 包含 app 模块
 // Gradle 会查找名为 "app" 的子目录并将其作为模块引入项目
 include(":app")
+
+// 包含直接输入 NewTypeConnectionCredential 的独立测试应用模块
+include(":directcredentialtest")

@@ -1,0 +1,4 @@
+<!-- newtypesdk_demo_android/directcredentialtest/src/main/res/values/themes.xml -->
+<resources>
+    <style name="Theme.NewTypeSdkDirectTest" parent="Theme.MaterialComponents.DayNight.NoActionBar" />
+</resources>
