@@ -28,11 +28,14 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
+    // 这个模块用于绕过客户后端，直接粘贴 NewTypeConnectionCredential 测试 SDK 连接。
+    // 适合排查“后端已返回凭证，但 App/SDK 连接异常”的问题。
     private var client: NewTypeSessionClient? = null
     private var stateJob: Job? = null
     private var eventJob: Job? = null
     private var latestState: SessionConnectionState = SessionConnectionState()
     private var activeCredential: DirectCredentialInput? = null
+    private var lastLoggedPhase: SessionPhase? = null
 
     private lateinit var statusText: TextView
     private lateinit var transcriptText: TextView
@@ -58,6 +61,7 @@ class MainActivity : AppCompatActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
+        Log.i(TAG, "[NT-DIRECT][PERMISSION] RECORD_AUDIO result granted=$granted")
         if (!granted) {
             toast("需要麦克风权限")
         }
@@ -74,6 +78,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun bindViews() {
+        Log.d(TAG, "[NT-DIRECT][UI] bindViews")
         statusText = findViewById(R.id.statusText)
         transcriptText = findViewById(R.id.transcriptText)
         summaryText = findViewById(R.id.summaryText)
@@ -97,7 +102,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun bindActions() {
+        Log.d(TAG, "[NT-DIRECT][UI] bindActions")
+        // Connect：读取页面输入的连接凭证，直接传给 SDK，不请求任何客户后端。
         joinButton.setOnClickListener { connectSession() }
+        // Leave：只断开 SDK 实时连接；此模块没有业务后端结束接口。
         leaveButton.setOnClickListener { leaveSession() }
         vadModeGroup.setOnCheckedChangeListener { _, checkedId ->
             val mode = when (checkedId) {
@@ -120,11 +128,13 @@ class MainActivity : AppCompatActivity() {
             val activeClient = client ?: return@setOnTouchListener false
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    // PTT/半自动模式下，按下按钮开始采集一轮用户发言。
                     Log.i(TAG, "[NT-DIRECT][PTT] ACTION_DOWN startSpeaking")
                     lifecycleScope.launch { activeClient.startSpeaking() }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    // 松手和取消都必须 stopSpeaking，防止一轮发言一直处于 recording。
                     Log.i(TAG, "[NT-DIRECT][PTT] ACTION_UP/CANCEL stopSpeaking action=${event.actionMasked}")
                     lifecycleScope.launch { activeClient.stopSpeaking() }
                     true
@@ -137,10 +147,13 @@ class MainActivity : AppCompatActivity() {
     private fun connectSession() {
         val credentialInput = readCredentialInput() ?: return
         Log.i(TAG, "[NT-DIRECT][CONNECT] start ${credentialInput.safeSummary()} mode=${getCurrentVadMode()} preset=${getCurrentVadPreset()}")
+        Log.d(TAG, "[NT-DIRECT][CONNECT] close previous client if present hasClient=${client != null}")
         client?.close()
+        Log.d(TAG, "[NT-DIRECT][CONNECT] creating SDK client")
         client = NewTypeSessionClient.create(this)
         val activeClient = client ?: return
         activeCredential = credentialInput
+        // 先设置 VAD，再监听状态，最后 connect，便于看到完整连接过程日志。
         activeClient.setVadPreset(getCurrentVadPreset())
         activeClient.setVadMode(getCurrentVadMode())
         observeClient(activeClient)
@@ -158,6 +171,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun readCredentialInput(): DirectCredentialInput? {
+        // 直接凭证测试要求字段完整；token 只做长度/脱敏日志，不打印明文。
         val sessionId = sessionIdInput.trimmedText()
         val roomName = roomNameInput.trimmedText()
         val connectionUrl = connectionUrlInput.trimmedText()
@@ -169,6 +183,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             expiresInText.toLongOrNull() ?: return showInputError("expiresIn 必须是数字")
         }
+        Log.d(TAG, "[NT-DIRECT][INPUT] read sessionId=$sessionId roomName=$roomName url=$connectionUrl identity=$identity token=${connectionToken.maskSecret()} expiresIn=$expiresIn")
 
         return when {
             sessionId.isBlank() -> showInputError("请输入 sessionId")
@@ -215,6 +230,7 @@ class MainActivity : AppCompatActivity() {
         val sessionId = activeCredential?.sessionId
         Log.i(TAG, "[NT-DIRECT][LEAVE] requested sessionId=$sessionId")
         lifecycleScope.launch {
+            // Direct 测试模块没有业务后端，所以这里只调用 SDK disconnect。
             runCatching { client?.disconnect("user-leave") }
                 .onSuccess { Log.i(TAG, "[NT-DIRECT][LEAVE] SDK disconnect completed") }
                 .onFailure { Log.e(TAG, "[NT-DIRECT][LEAVE] SDK disconnect failed message=${it.message}", it) }
@@ -228,7 +244,12 @@ class MainActivity : AppCompatActivity() {
         eventJob?.cancel()
         stateJob = lifecycleScope.launch {
             activeClient.state.collectLatest {
+                if (lastLoggedPhase != it.phase) {
+                    Log.i(TAG, "[NT-DIRECT][STATE-TRANSITION] ${lastLoggedPhase ?: "<initial>"} -> ${it.phase} sessionId=${it.sessionId}")
+                    lastLoggedPhase = it.phase
+                }
                 Log.i(TAG, "[NT-DIRECT][STATE] phase=${it.phase} sessionId=${it.sessionId} participants=${it.participantCount} micReady=${it.micReady} recording=${it.recording} turnBusy=${it.turnBusy} agent=${it.agentStatus.phase} message=${it.agentStatus.message}")
+                Log.d(TAG, "[NT-DIRECT][STATE-DETAIL] transcriptCount=${it.transcript.size} hasSummary=${it.summary != null} latestTranscript=${it.transcript.lastOrNull()?.safeSummary() ?: "-"}")
                 renderState(it)
             }
         }
@@ -248,6 +269,7 @@ class MainActivity : AppCompatActivity() {
     private fun renderState(state: SessionConnectionState) {
         latestState = state
         val credential = activeCredential
+        // 页面状态面板用于现场排查：包含凭证摘要、SDK 状态、麦克风、录音和 Agent 入房情况。
         statusText.text = buildString {
             append("phase=")
             append(state.phase.name)
@@ -313,6 +335,7 @@ class MainActivity : AppCompatActivity() {
         } ?: "暂无总结"
 
         updateActionButtons(state)
+        Log.d(TAG, "[NT-DIRECT][RENDER] phase=${state.phase.name}, participants=${state.participantCount}, agent=${state.agentStatus.phase.name}, transcript=${state.transcript.size}, hasSummary=${state.summary != null}")
     }
 
     private fun ensureMicPermission() {
@@ -334,6 +357,7 @@ class MainActivity : AppCompatActivity() {
         pttButton.isEnabled = connected && !safeState.turnBusy && currentMode != VadMode.FULL_AUTO
         vadModeGroup.isEnabled = true
         setCredentialInputsEnabled(!connecting && !connected)
+        Log.d(TAG, "[NT-DIRECT][BUTTONS] phase=${safeState.phase} connected=$connected connecting=$connecting mode=$currentMode connect=${joinButton.isEnabled} leave=${leaveButton.isEnabled} ptt=${pttButton.isEnabled} inputs=${!connecting && !connected}")
     }
 
     private fun setCredentialInputsEnabled(enabled: Boolean) {
@@ -351,6 +375,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         Log.i(TAG, "[NT-DIRECT][LIFECYCLE] onDestroy sessionId=${activeCredential?.sessionId}")
+        // Activity 销毁时 close SDK，确保释放麦克风、音频轨道和 VAD 资源。
         stateJob?.cancel()
         eventJob?.cancel()
         client?.close()
@@ -385,6 +410,10 @@ private fun DirectCredentialInput.toSdkCredential(): NewTypeConnectionCredential
 
 private fun DirectCredentialInput.safeSummary(): String {
     return "sessionId=$sessionId roomName=$roomName url=$connectionUrl identity=$identity token=${connectionToken.maskSecret()} expiresIn=$expiresIn"
+}
+
+private fun Any.safeSummary(): String {
+    return toString().replace('\n', ' ').take(180)
 }
 
 private fun EditText.trimmedText(): String = text.toString().trim()

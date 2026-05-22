@@ -37,10 +37,13 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
 class MainActivity : AppCompatActivity() {
+    // SDK 客户端只负责实时音频房间连接、麦克风、VAD、状态流和事件流。
+    // 登录客户后端、创建业务会话、结束业务会话都放在 Demo App 层完成，便于客户替换成自己的后端。
     private var client: NewTypeSessionClient? = null
     private var stateJob: Job? = null
     private var eventJob: Job? = null
     private var latestState: SessionConnectionState = SessionConnectionState()
+    private var lastLoggedPhase: SessionPhase? = null
 
     private lateinit var statusText: TextView
     private lateinit var transcriptText: TextView
@@ -72,6 +75,7 @@ class MainActivity : AppCompatActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
+        Log.i(TAG, "[NT-DEMO][PERMISSION] RECORD_AUDIO result granted=$granted")
         if (!granted) {
             toast("需要麦克风权限")
         }
@@ -115,8 +119,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun bindActions() {
         Log.d(TAG, "[NT-DEMO][UI] bindActions")
+        // 登录客户后端：这里只拿客户侧 token，SDK 不会读取这个 token。
         loginButton.setOnClickListener { loginCustomer() }
+        // Connect：先向客户后端换取媒体房间凭证，再把凭证交给 SDK。
         joinButton.setOnClickListener { connectSession() }
+        // Leave：先断开 SDK 实时连接，再按业务需要通知客户后端结束 session。
         leaveButton.setOnClickListener { leaveSession() }
         vadModeGroup.setOnCheckedChangeListener { _, checkedId ->
             val mode = when (checkedId) {
@@ -139,11 +146,13 @@ class MainActivity : AppCompatActivity() {
             val activeClient = client ?: return@setOnTouchListener false
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    // PTT 模式下按下即开始一轮用户发言；半自动模式也可用它手动触发。
                     Log.i(TAG, "[NT-DEMO][PTT] ACTION_DOWN startSpeaking")
                     lifecycleScope.launch { activeClient.startSpeaking() }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    // 松手或手势取消都要 stopSpeaking，避免麦克风采集停不下来。
                     Log.i(TAG, "[NT-DEMO][PTT] ACTION_UP/CANCEL stopSpeaking action=${event.actionMasked}")
                     lifecycleScope.launch { activeClient.stopSpeaking() }
                     true
@@ -163,6 +172,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         Log.i(TAG, "[NT-DEMO][AUTH] login start baseUrl=${apiBaseUrlInput.text.toString().trim()} email=$email")
+        Log.d(TAG, "[NT-DEMO][AUTH] login form emailLength=${email.length} passwordLength=${password.length}")
         loginButton.isEnabled = false
         loginButton.text = "登录中..."
         lifecycleScope.launch {
@@ -200,6 +210,7 @@ class MainActivity : AppCompatActivity() {
         Log.d(TAG, "[NT-DEMO][CONNECT] creating SDK client")
         client = NewTypeSessionClient.create(this)
         val activeClient = client ?: return
+        // 建议先配置 VAD 和监听 state/events，再 connect。这样连接过程中的状态变化不会漏掉。
         activeClient.setVadPreset(getCurrentVadPreset())
         activeClient.setVadMode(getCurrentVadMode())
         observeClient(activeClient)
@@ -216,11 +227,13 @@ class MainActivity : AppCompatActivity() {
             identity = childNameInput.text.toString().trim().ifBlank { "android-child" },
         )
         Log.i(TAG, "[NT-DEMO][BACKEND] start session request appUserId=${request.appUserId} topic=${request.topic} childName=${request.childName} identity=${request.identity}")
+        Log.d(TAG, "[NT-DEMO][BACKEND] start session request detail externalSessionId=${request.externalSessionId} age=${request.age} grade=${request.grade} interests=${request.interests.joinToString()}")
         lifecycleScope.launch {
             runCatching {
                 val credential = backend.startRealtimeSession(auth.token, request)
                 Log.i(TAG, "[NT-DEMO][BACKEND] credential received ${credential.safeSummary()}")
                 activeSessionId = credential.sessionId
+                // 只有这里的 NewTypeConnectionCredential 会传给 SDK；客户后端 token 不会传入 SDK。
                 Log.i(TAG, "[NT-DEMO][CONNECT] calling SDK connect sessionId=${credential.sessionId}")
                 activeClient.connect(credential.toSdkCredential())
                 Log.i(TAG, "[NT-DEMO][CONNECT] SDK connect call completed sessionId=${credential.sessionId}")
@@ -260,6 +273,7 @@ class MainActivity : AppCompatActivity() {
         val backend = buildCustomerBackendApi()
         Log.i(TAG, "[NT-DEMO][LEAVE] requested sessionId=$sessionId hasAuth=${auth != null}")
         lifecycleScope.launch {
+            // SDK disconnect 只负责离开实时音频房间；业务结束上报由 App 层自行调用客户后端。
             runCatching { client?.disconnect("user-leave") }
                 .onSuccess { Log.i(TAG, "[NT-DEMO][LEAVE] SDK disconnect completed") }
                 .onFailure { Log.e(TAG, "[NT-DEMO][LEAVE] SDK disconnect failed message=${it.message}", it) }
@@ -278,7 +292,12 @@ class MainActivity : AppCompatActivity() {
         eventJob?.cancel()
         stateJob = lifecycleScope.launch {
             activeClient.state.collectLatest {
+                if (lastLoggedPhase != it.phase) {
+                    Log.i(TAG, "[NT-DEMO][STATE-TRANSITION] ${lastLoggedPhase ?: "<initial>"} -> ${it.phase} sessionId=${it.sessionId}")
+                    lastLoggedPhase = it.phase
+                }
                 Log.i(TAG, "[NT-DEMO][STATE] phase=${it.phase} sessionId=${it.sessionId} participants=${it.participantCount} micReady=${it.micReady} recording=${it.recording} turnBusy=${it.turnBusy} agent=${it.agentStatus.phase} message=${it.agentStatus.message}")
+                Log.d(TAG, "[NT-DEMO][STATE-DETAIL] transcriptCount=${it.transcript.size} hasSummary=${it.summary != null} latestTranscript=${it.transcript.lastOrNull()?.safeSummary() ?: "-"}")
                 renderState(it)
             }
         }
@@ -297,6 +316,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderState(state: SessionConnectionState) {
         latestState = state
+        // statusText 是排查现场的主面板：把连接阶段、Agent 状态、麦克风、录音等关键字段直接展示出来。
         statusText.text = buildString {
             append("phase=")
             append(state.phase.name)
@@ -377,6 +397,7 @@ class MainActivity : AppCompatActivity() {
         joinButton.isEnabled = loggedIn && safeState.phase != SessionPhase.CONNECTING && !connected
         pttButton.isEnabled = connected && !safeState.turnBusy && currentMode != VadMode.FULL_AUTO
         vadModeGroup.isEnabled = true
+        Log.d(TAG, "[NT-DEMO][BUTTONS] phase=${safeState.phase} loggedIn=$loggedIn connected=$connected mode=$currentMode login=${loginButton.isEnabled} connect=${joinButton.isEnabled} leave=${leaveButton.isEnabled} ptt=${pttButton.isEnabled}")
     }
 
     private fun toast(message: String) {
@@ -402,6 +423,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         Log.i(TAG, "[NT-DEMO][LIFECYCLE] onDestroy sessionId=$activeSessionId")
+        // Activity 销毁时必须 close，释放麦克风、音频链路、VAD 等 SDK 内部资源。
         stateJob?.cancel()
         eventJob?.cancel()
         client?.close()
@@ -426,6 +448,7 @@ private class CustomerBackendApi(
     suspend fun login(email: String, password: String): CustomerLoginResponse {
         val request = CustomerLoginRequest(email = email.trim(), password = password)
         Log.i(TAG, "[NT-DEMO][HTTP] POST /auth/login email=${request.email}")
+        Log.d(TAG, "[NT-DEMO][HTTP] login payload email=${request.email} passwordLength=${request.password.length}")
         val response = execute(
             Request.Builder()
                 .url(buildUrl("/auth/login"))
@@ -450,6 +473,7 @@ private class CustomerBackendApi(
         Log.d(TAG, "[NT-DEMO][HTTP] /app/sessions responseBytes=${sessionResponse.length}")
         val session = json.decodeFromString(StartRealtimeSessionResponse.serializer(), sessionResponse)
         Log.i(TAG, "[NT-DEMO][HTTP] session created sessionId=${session.session.sessionId} roomName=${session.session.roomName} hasRealtime=${session.realtime != null} hasLivekit=${session.livekit != null} hasUserToken=${session.userToken != null}")
+        Log.d(TAG, "[NT-DEMO][HTTP] session response tokenType=${session.userToken?.tokenType ?: "-"} userTokenExpiresIn=${session.userToken?.expiresIn ?: -1}")
         val credential = session.realtime ?: session.livekit ?: requestRealtimeCredential(
             customerToken = customerToken,
             sessionId = session.session.sessionId,
@@ -470,6 +494,7 @@ private class CustomerBackendApi(
         sessionId: String,
         userToken: String,
     ): CustomerRealtimeCredentialResponse {
+        // 兼容两种后端返回方式：如果创建 session 时没有直接返回实时凭证，则用 userToken 再换一次 LiveKit token。
         Log.i(TAG, "[NT-DEMO][HTTP] POST /app/sessions/{sessionId}/livekit-token sessionId=$sessionId userToken=${userToken.maskSecret()}")
         val credentialResponse = execute(
             authorizedBuilder("/app/sessions/${sessionId.urlEncode()}/livekit-token", customerToken)
@@ -498,12 +523,15 @@ private class CustomerBackendApi(
 
     private suspend fun execute(request: Request): String {
         return suspendCancellableCoroutine { continuation ->
+            val startedAtMs = System.currentTimeMillis()
             Log.i(TAG, "[NT-DEMO][HTTP] request ${request.method} ${request.url}")
+            Log.d(TAG, "[NT-DEMO][HTTP] request headers hasAuth=${request.header("Authorization") != null} accept=${request.header("Accept")}")
             val call = httpClient.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : okhttp3.Callback {
                 override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                    Log.e(TAG, "[NT-DEMO][HTTP] failure ${request.method} ${request.url} message=${e.message}", e)
+                    val elapsedMs = System.currentTimeMillis() - startedAtMs
+                    Log.e(TAG, "[NT-DEMO][HTTP] failure ${request.method} ${request.url} elapsedMs=$elapsedMs message=${e.message}", e)
                     if (!continuation.isCancelled) {
                         continuation.resumeWith(Result.failure(e))
                     }
@@ -512,8 +540,10 @@ private class CustomerBackendApi(
                 override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
                     response.use { res ->
                         val body = res.body?.string().orEmpty()
-                        Log.i(TAG, "[NT-DEMO][HTTP] response ${request.method} ${request.url} code=${res.code} success=${res.isSuccessful} bytes=${body.length}")
+                        val elapsedMs = System.currentTimeMillis() - startedAtMs
+                        Log.i(TAG, "[NT-DEMO][HTTP] response ${request.method} ${request.url} code=${res.code} success=${res.isSuccessful} bytes=${body.length} elapsedMs=$elapsedMs")
                         if (!res.isSuccessful) {
+                            Log.w(TAG, "[NT-DEMO][HTTP] error body preview=${body.take(300)}")
                             continuation.resumeWith(Result.failure(IllegalStateException("HTTP ${res.code}: $body")))
                             return
                         }
@@ -527,6 +557,7 @@ private class CustomerBackendApi(
     private fun buildUrl(path: String): String {
         val normalizedBase = apiBaseUrl.trim().trimEnd('/')
         val normalizedPath = path.trim().let { if (it.startsWith("/")) it else "/$it" }
+        Log.d(TAG, "[NT-DEMO][HTTP] buildUrl base=$normalizedBase path=$normalizedPath")
         return "$normalizedBase$normalizedPath"
     }
 
@@ -661,6 +692,10 @@ private fun CustomerAuthState.tokenPreview(): String {
 
 private fun RealtimeConnectionCredentialResponse.safeSummary(): String {
     return "sessionId=$sessionId roomName=$roomName url=$connectionUrl identity=$identity token=${connectionToken.maskSecret()} expiresIn=$expiresIn"
+}
+
+private fun Any.safeSummary(): String {
+    return toString().replace('\n', ' ').take(180)
 }
 
 private fun String.maskSecret(): String {
