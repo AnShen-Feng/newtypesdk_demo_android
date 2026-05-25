@@ -249,7 +249,7 @@ class MainActivity : AppCompatActivity() {
                     lastLoggedPhase = it.phase
                 }
                 Log.i(TAG, "[NT-DIRECT][STATE] phase=${it.phase} sessionId=${it.sessionId} participants=${it.participantCount} micReady=${it.micReady} recording=${it.recording} turnBusy=${it.turnBusy} agent=${it.agentStatus.phase} message=${it.agentStatus.message}")
-                Log.d(TAG, "[NT-DIRECT][STATE-DETAIL] transcriptCount=${it.transcript.size} hasSummary=${it.summary != null} latestTranscript=${it.transcript.lastOrNull()?.safeSummary() ?: "-"}")
+                Log.d(TAG, "[NT-DIRECT][STATE-DETAIL] transcriptCount=${it.transcript.size} hasSummary=${it.summary != null} latestTranscript=${it.transcript.lastOrNull()?.debugSummary() ?: "-"}")
                 renderState(it)
             }
         }
@@ -314,11 +314,12 @@ class MainActivity : AppCompatActivity() {
             append("\n录音：${if (state.recording) "进行中" else "待机"}")
         }
 
-        transcriptText.text = state.transcript.joinToString("\n\n") { entry ->
-            val role = if (entry.speaker == "ai") "AI" else "Child"
-            val tail = if (entry.meta.isBlank()) "" else "\n${entry.meta}"
-            "$role: ${entry.text}$tail"
-        }.ifBlank { "暂无消息" }
+        transcriptText.text = state.transcript
+            .filter { it.text.isNotBlank() || it.meta.isNotBlank() }
+            .joinToString("\n\n") { entry ->
+                entry.toDisplayText()
+            }
+            .ifBlank { "暂无消息" }
 
         summaryText.text = state.summary?.let { summary ->
             buildString {
@@ -412,8 +413,21 @@ private fun DirectCredentialInput.safeSummary(): String {
     return "sessionId=$sessionId roomName=$roomName url=$connectionUrl identity=$identity token=${connectionToken.maskSecret()} expiresIn=$expiresIn"
 }
 
-private fun Any.safeSummary(): String {
-    return toString().replace('\n', ' ').take(180)
+private fun com.newtype.sdkcore.TranscriptEntry.toDisplayText(): String {
+    val role = when (speaker.lowercase()) {
+        "ai" -> "AI"
+        "child" -> "Child"
+        else -> speaker.ifBlank { "Unknown" }
+    }
+    val streamingSuffix = if (streaming) " [streaming]" else ""
+    val metaSuffix = if (meta.isBlank()) "" else "\n$meta"
+    val content = text.ifBlank { "[无文本内容]" }
+    return "$role: $content$streamingSuffix$metaSuffix"
+}
+
+private fun com.newtype.sdkcore.TranscriptEntry.debugSummary(): String {
+    return "speaker=$speaker, text=${text.replace('\n', ' ').ifBlank { "[无文本内容]" }}, meta=${meta.replace('\n', ' ')}, streaming=$streaming"
+        .take(500)
 }
 
 private fun EditText.trimmedText(): String = text.toString().trim()
