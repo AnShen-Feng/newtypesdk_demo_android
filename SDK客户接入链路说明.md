@@ -11,6 +11,13 @@
 
 当前 demo 的核心代码在 `app/src/main/java/com/newtype/sdkdemo/MainActivity.kt`，页面布局在 `app/src/main/res/layout/activity_main.xml`。
 
+此外，工程还包含一个直接凭证排障 demo：
+
+- `directcredentialtest/src/main/java/com/newtype/sdkdirecttest/MainActivity.kt`
+- `directcredentialtest/src/main/res/layout/activity_main.xml`
+
+它用于跳过客户后端，直接输入 `NewTypeConnectionCredential` 验证 connect / interrupt / disconnect。
+
 ## 1. 客户需要先准备什么
 
 ### 1.1 Android 工程依赖
@@ -84,8 +91,9 @@ private fun ensureMicPermission() {
 10. SDK 连接媒体房间并维护实时链路
 11. App 从 SDK state 中渲染连接阶段、参与者、麦克风、录音、转录、总结
 12. 用户说话时 App 调 startSpeaking()/stopSpeaking()，全自动模式可不手动调用
-13. 用户离开时 App 调 disconnect(reason) 并通知客户后端结束会话
-14. Activity 销毁时 App 调 close() 释放资源
+13. 如需打断当前 AI/TTS 回复，App 可调 interrupt()
+14. 用户离开时 App 调 disconnect(reason) 并通知客户后端结束会话
+15. Activity 销毁时 App 调 close() 释放资源
 ```
 
 注意：当前 demo 不让 SDK 直接登录客户后端或创建业务 session。登录、创建 session、结束 session 都在 demo 的 `CustomerBackendApi` 中由 App 层完成。
@@ -474,6 +482,7 @@ Demo 中的生命周期策略：
 | Connect 时 | `NewTypeSessionClient.create(this)` | 创建新的 SDK client。 |
 | Connect 前 | `setVadPreset(...)` / `setVadMode(...)` | 连接前先设置发言控制。 |
 | Connect 前 | `observeClient(activeClient)` | 先 collect 状态和事件，再 connect。 |
+| 对话进行中 | `client?.interrupt()` | 当前 AI/TTS 回复仍在进行时，主动打断播报。 |
 | Leave 时 | `client?.disconnect("user-leave")` | SDK 断开当前媒体房间。 |
 | Leave 后 | `backend.endRealtimeSession(...)` | App 通知客户后端业务会话结束。 |
 | Activity 销毁 | `client?.close()` | 释放 SDK 资源。 |
@@ -594,6 +603,7 @@ private fun updateActionButtons(state: SessionConnectionState?) {
     leaveButton.isEnabled = connected
     joinButton.isEnabled = loggedIn && safeState.phase != SessionPhase.CONNECTING && !connected
     pttButton.isEnabled = connected && !safeState.turnBusy && currentMode != VadMode.FULL_AUTO
+    interruptButton.isEnabled = connected && safeState.turnBusy
     vadModeGroup.isEnabled = true
 }
 ```
@@ -707,10 +717,20 @@ pttButton.setOnTouchListener { _, event ->
 }
 ```
 
+Interrupt 按钮：
+
+```kotlin
+interruptButton.setOnClickListener {
+    val activeClient = client ?: return@setOnClickListener
+    lifecycleScope.launch { activeClient.interrupt() }
+}
+```
+
 客户 UI 建议：
 
 - 只有 `phase == CONNECTED` 时允许说话。
 - `turnBusy == true` 时禁用 PTT，避免重复提交。
+- `turnBusy == true` 时启用 `Interrupt`，用于抢话或停止当前 AI/TTS 播报。
 - `VadMode.FULL_AUTO` 时不展示或禁用 PTT。
 - `recording == true` 时展示录音动效。
 
@@ -852,6 +872,7 @@ class SpeakingActivity : AppCompatActivity() {
 - 已先 collect `client.state` / `client.events`，再调用 `connect(...)`。
 - UI 已基于 `phase`、`participantCount`、`micReady`、`recording`、`turnBusy` 控制展示和按钮。
 - 已根据产品场景设置 `VadMode` 和 `VADPreset`。
+- 如需支持主动打断当前播报，已在 `turnBusy == true` 时调用 `interrupt()`。
 - 用户离开时调用 `disconnect(reason)`，Activity 销毁时调用 `close()`。
 
 ## 15. 常见问题
@@ -881,6 +902,16 @@ connected && !safeState.turnBusy && currentMode != VadMode.FULL_AUTO
 ```
 
 如果正在连接、上一轮还在处理、或当前为全自动模式，PTT 会被禁用。
+
+### Interrupt 何时可点
+
+当前 demo 的启用条件是：
+
+```kotlin
+connected && safeState.turnBusy
+```
+
+也就是只有在会话已连接且 AI/后端仍在处理或播报当前 turn 时，才允许主动打断。
 
 ### 退出页面后仍占用麦克风
 

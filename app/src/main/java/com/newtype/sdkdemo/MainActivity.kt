@@ -52,6 +52,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var joinButton: Button
     private lateinit var leaveButton: Button
     private lateinit var pttButton: Button
+    private lateinit var interruptButton: Button
     private lateinit var vadModeGroup: RadioGroup
     private lateinit var vadModeOff: RadioButton
     private lateinit var vadModeSemiAuto: RadioButton
@@ -99,6 +100,7 @@ class MainActivity : AppCompatActivity() {
         joinButton = findViewById(R.id.joinButton)
         leaveButton = findViewById(R.id.leaveButton)
         pttButton = findViewById(R.id.pttButton)
+        interruptButton = findViewById(R.id.interruptButton)
         vadModeGroup = findViewById(R.id.vadModeGroup)
         vadModeOff = findViewById(R.id.vadModeOff)
         vadModeSemiAuto = findViewById(R.id.vadModeSemiAuto)
@@ -125,6 +127,12 @@ class MainActivity : AppCompatActivity() {
         joinButton.setOnClickListener { connectSession() }
         // Leave：先断开 SDK 实时连接，再按业务需要通知客户后端结束 session。
         leaveButton.setOnClickListener { leaveSession() }
+        // Interrupt：主动打断当前 AI/TTS 回复，不依赖松开 PTT。
+        interruptButton.setOnClickListener {
+            val activeClient = client ?: return@setOnClickListener
+            Log.i(TAG, "[NT-DEMO][INTERRUPT] click interrupt")
+            lifecycleScope.launch { activeClient.interrupt() }
+        }
         vadModeGroup.setOnCheckedChangeListener { _, checkedId ->
             val mode = when (checkedId) {
                 R.id.vadModeOff -> VadMode.OFF
@@ -397,8 +405,9 @@ class MainActivity : AppCompatActivity() {
         leaveButton.isEnabled = connected
         joinButton.isEnabled = loggedIn && safeState.phase != SessionPhase.CONNECTING && !connected
         pttButton.isEnabled = connected && !safeState.turnBusy && currentMode != VadMode.FULL_AUTO
+        interruptButton.isEnabled = connected && safeState.turnBusy
         vadModeGroup.isEnabled = true
-        Log.d(TAG, "[NT-DEMO][BUTTONS] phase=${safeState.phase} loggedIn=$loggedIn connected=$connected mode=$currentMode login=${loginButton.isEnabled} connect=${joinButton.isEnabled} leave=${leaveButton.isEnabled} ptt=${pttButton.isEnabled}")
+        Log.d(TAG, "[NT-DEMO][BUTTONS] phase=${safeState.phase} loggedIn=$loggedIn connected=$connected mode=$currentMode login=${loginButton.isEnabled} connect=${joinButton.isEnabled} leave=${leaveButton.isEnabled} ptt=${pttButton.isEnabled} interrupt=${interruptButton.isEnabled}")
     }
 
     private fun toast(message: String) {

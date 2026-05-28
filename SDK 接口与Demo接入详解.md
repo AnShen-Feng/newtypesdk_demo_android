@@ -11,6 +11,8 @@
 | `app/src/main/res/xml/network_security_config.xml` | 允许局域网 HTTP 客户后端访问。 |
 | `app/src/main/res/layout/activity_main.xml` | Demo 页面输入框、按钮、状态展示区域。 |
 | `app/src/main/java/com/newtype/sdkdemo/MainActivity.kt` | App 请求客户后端、创建 SDK client、connect、VAD、状态监听、disconnect。 |
+| `directcredentialtest/src/main/res/layout/activity_main.xml` | 直接输入连接凭证的独立排障页面。 |
+| `directcredentialtest/src/main/java/com/newtype/sdkdirecttest/MainActivity.kt` | 直接输入 `NewTypeConnectionCredential` 测试 SDK connect、interrupt、disconnect。 |
 | `newtypesdkcore-release.aar` | NewType Android SDK 核心包。 |
 
 ## 2. 整体链路
@@ -76,6 +78,10 @@ import com.newtype.sdkcore.vad.VADPreset
 | `SessionPhase` | 连接阶段枚举，用于控制按钮可用性。 |
 | `VadMode` | 发言控制模式：PTT、半自动、全自动。 |
 | `VADPreset` | VAD 灵敏度预设：灵敏、自然、儿童。 |
+
+当前 SDK 还支持：
+
+- `client.interrupt()`：主动打断当前 AI/TTS 回复
 
 ## 5. Demo App 自己请求客户后端
 
@@ -247,6 +253,21 @@ pttButton.setOnTouchListener { _, event ->
 }
 ```
 
+Interrupt 按钮调用 SDK 的主动打断能力：
+
+```kotlin
+interruptButton.setOnClickListener {
+    val activeClient = client ?: return@setOnClickListener
+    lifecycleScope.launch { activeClient.interrupt() }
+}
+```
+
+当前两个 demo 都遵循同一启用条件：
+
+```kotlin
+interruptButton.isEnabled = connected && safeState.turnBusy
+```
+
 ## 11. 结束会话
 
 Demo 中 SDK 只负责断开实时会话，业务结束上报由 App 自己请求客户后端：
@@ -295,6 +316,7 @@ override fun onDestroy() {
 | VAD Mode | `vadModeGroup` | `getCurrentVadMode()` / `setVadMode()` | 切换 PTT、半自动、全自动。 |
 | VAD Preset | `vadPresetGroup` | `getCurrentVadPreset()` / `setVadPreset()` | 切换灵敏、自然、儿童。 |
 | Hold to Talk | `pttButton` | `startSpeaking()` / `stopSpeaking()` | 手动发言控制。 |
+| Interrupt | `interruptButton` | `interrupt()` | 主动打断当前 AI/TTS 回复。 |
 | 状态文本 | `statusText` | `renderState()` | 展示连接和 Agent 状态。 |
 | Transcript | `transcriptText` | `renderState()` | 展示转录和 AI 回复。 |
 | Summary | `summaryText` | `renderState()` | 展示会话总结。 |
@@ -305,8 +327,9 @@ override fun onDestroy() {
 2. 客户 App 自己调用客户后端创建会话，可传任意业务字段。
 3. 客户后端返回 `NewTypeConnectionCredential` 所需字段给 App。
 4. App 调用 `client.connect(...)` 后，SDK 负责实时音频、VAD、状态和事件。
-5. 用户结束时调用 `client.disconnect(...)`，业务结束上报由 App 自己调客户后端。
-6. 页面销毁时调用 `client.close()`。
+5. 如需提前打断 AI/TTS 回复，可调用 `client.interrupt()` 或在 demo 页面点击 `Interrupt`。
+6. 用户结束时调用 `client.disconnect(...)`，业务结束上报由 App 自己调客户后端。
+7. 页面销毁时调用 `client.close()`。
 
 ## 14. 最小交付清单
 
@@ -322,5 +345,6 @@ override fun onDestroy() {
 - collect `client.state` 渲染连接状态、对话转录、会话总结。
 - collect `client.events` 展示错误事件。
 - 根据产品体验设置 `VadMode` 和 `VADPreset`。
+- 如需支持抢话/打断播报，在 `turnBusy == true` 时调用 `client.interrupt()`。
 - 用户结束时调用 `disconnect()`。
 - 页面销毁时调用 `close()`。

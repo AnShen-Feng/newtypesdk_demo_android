@@ -61,8 +61,9 @@ dependencies {
 5. App 设置 VAD 模式和 VAD 预设
 6. App 调 client.connect(NewTypeConnectionCredential)
 7. App collect client.state 和 client.events 渲染 UI
-8. 用户结束时调用 client.disconnect(reason)，页面销毁时调用 client.close()
-9. 如需业务结束上报，App 自己调用客户后端结束接口
+8. 如需主动打断当前 AI/TTS 回复，可调用 client.interrupt()
+9. 用户结束时调用 client.disconnect(reason)，页面销毁时调用 client.close()
+10. 如需业务结束上报，App 自己调用客户后端结束接口
 ```
 
 ## 快速开始
@@ -117,6 +118,12 @@ client.close()
 customerApi.endSpeakingSession(sessionId) // 如需业务上报，由 App 自己调用
 ```
 
+主动打断当前 AI/TTS 回复：
+
+```kotlin
+client.interrupt()
+```
+
 ## SDK 接口总览
 
 | 接口 | 作用 | 主要输入 | 主要输出 |
@@ -124,6 +131,7 @@ customerApi.endSpeakingSession(sessionId) // 如需业务上报，由 App 自己
 | `NewTypeSessionClient.create(...)` | 创建 SDK 客户端 | `Context`、可选 `NewTypeConfig` | `NewTypeSessionClient` |
 | `client.connect(...)` | 使用 App 已获取的连接凭证进入实时会话 | `NewTypeConnectionCredential` | 无直接返回，结果走 `state/events` |
 | `client.disconnect(...)` | 发送结束信令并断开实时会话 | reason | 无 |
+| `client.interrupt()` | 主动打断当前 AI/TTS 回复 | 无 | 无 |
 | `client.startSpeaking()` | 开始一轮发言 | 无 | 无，状态走 `state` |
 | `client.stopSpeaking()` | 结束一轮发言 | 无 | 无，状态走 `state` |
 | `client.setVadMode(...)` | 设置发言控制模式 | `VadMode` | 无 |
@@ -187,6 +195,11 @@ POST /app/sessions/{sessionId}/end
 
 这些路径只属于 Demo App 对 `customer-backend-demo` 的示例适配，不属于 SDK API。客户正式接入时应替换为自己的后端接口和类型安全请求模型。
 
+当前工程包含两个 demo：
+
+- `app/`：完整客户后端接入示例，演示登录、创建会话、connect、interrupt、disconnect
+- `directcredentialtest/`：直接粘贴 `NewTypeConnectionCredential` 的排障示例，演示跳过客户后端直接验证 SDK 连接和 interrupt
+
 ## 常见问题
 
 ### SDK 是否会请求客户后端？
@@ -200,6 +213,10 @@ POST /app/sessions/{sessionId}/end
 ### 连接后没有声音或没有转录
 
 检查麦克风权限、`state.phase == CONNECTED`、`state.participantCount > 1`、`state.agentStatus.message`，以及 VAD/PTT 模式是否符合预期。
+
+### 如何主动打断 AI 回复
+
+当 `state.phase == CONNECTED` 且 `state.turnBusy == true` 时，可调用 `client.interrupt()`；当前 demo 的两个页面都提供了 `Interrupt` 按钮，并且只会在可打断时启用。
 
 ## 版本信息
 

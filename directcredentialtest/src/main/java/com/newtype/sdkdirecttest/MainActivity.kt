@@ -43,6 +43,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var joinButton: Button
     private lateinit var leaveButton: Button
     private lateinit var pttButton: Button
+    private lateinit var interruptButton: Button
     private lateinit var vadModeGroup: RadioGroup
     private lateinit var vadModeOff: RadioButton
     private lateinit var vadModeSemiAuto: RadioButton
@@ -85,6 +86,7 @@ class MainActivity : AppCompatActivity() {
         joinButton = findViewById(R.id.joinButton)
         leaveButton = findViewById(R.id.leaveButton)
         pttButton = findViewById(R.id.pttButton)
+        interruptButton = findViewById(R.id.interruptButton)
         vadModeGroup = findViewById(R.id.vadModeGroup)
         vadModeOff = findViewById(R.id.vadModeOff)
         vadModeSemiAuto = findViewById(R.id.vadModeSemiAuto)
@@ -107,6 +109,12 @@ class MainActivity : AppCompatActivity() {
         joinButton.setOnClickListener { connectSession() }
         // Leave：只断开 SDK 实时连接；此模块没有业务后端结束接口。
         leaveButton.setOnClickListener { leaveSession() }
+        // Interrupt：主动打断当前 AI/TTS 回复，用于直接凭证场景验证中断能力。
+        interruptButton.setOnClickListener {
+            val activeClient = client ?: return@setOnClickListener
+            Log.i(TAG, "[NT-DIRECT][INTERRUPT] click interrupt")
+            lifecycleScope.launch { activeClient.interrupt() }
+        }
         vadModeGroup.setOnCheckedChangeListener { _, checkedId ->
             val mode = when (checkedId) {
                 R.id.vadModeOff -> VadMode.OFF
@@ -356,9 +364,10 @@ class MainActivity : AppCompatActivity() {
         joinButton.isEnabled = !connecting && !connected
         leaveButton.isEnabled = connected
         pttButton.isEnabled = connected && !safeState.turnBusy && currentMode != VadMode.FULL_AUTO
+        interruptButton.isEnabled = connected && safeState.turnBusy
         vadModeGroup.isEnabled = true
         setCredentialInputsEnabled(!connecting && !connected)
-        Log.d(TAG, "[NT-DIRECT][BUTTONS] phase=${safeState.phase} connected=$connected connecting=$connecting mode=$currentMode connect=${joinButton.isEnabled} leave=${leaveButton.isEnabled} ptt=${pttButton.isEnabled} inputs=${!connecting && !connected}")
+        Log.d(TAG, "[NT-DIRECT][BUTTONS] phase=${safeState.phase} connected=$connected connecting=$connecting mode=$currentMode connect=${joinButton.isEnabled} leave=${leaveButton.isEnabled} ptt=${pttButton.isEnabled} interrupt=${interruptButton.isEnabled} inputs=${!connecting && !connected}")
     }
 
     private fun setCredentialInputsEnabled(enabled: Boolean) {

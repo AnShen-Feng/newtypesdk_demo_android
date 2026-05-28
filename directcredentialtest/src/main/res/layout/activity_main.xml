@@ -180,6 +180,14 @@
             android:enabled="false"
             android:text="Hold to Talk" />
 
+        <Button
+            android:id="@+id/interruptButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:enabled="false"
+            android:text="Interrupt" />
+
         <TextView
             android:id="@+id/statusText"
             android:layout_width="match_parent"
