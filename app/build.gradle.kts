@@ -141,7 +141,7 @@ dependencies {
     
     // ONNX Runtime Android - 机器学习推理引擎
     // 用于在移动端运行 ONNX 格式的机器学习模型（如 VAD 语音活动检测）
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.18.0")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")
 
     // JUnit - Java 单元测试框架
     testImplementation(libs.junit)

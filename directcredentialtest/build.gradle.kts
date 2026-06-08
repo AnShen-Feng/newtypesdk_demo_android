@@ -50,7 +50,7 @@ dependencies {
     implementation(files("../newtypesdkcore-release.aar"))
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.rtc.client)
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.18.0")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
